@@ -207,7 +207,6 @@ namespace ws {
 
         std::vector<uint8_t> frame = createMessageFrame(data);
 
-        // end of chatgpt generated code
         CHECK_UNWRAP(
             stream->send(frame.data(), frame.size()),
             "unable to send message frame: {}", res.unwrapErr().message()
