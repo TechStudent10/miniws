@@ -5,10 +5,7 @@ using namespace ws;
 
 int main() {
     auto client = new Client();
-    client->open({
-        .url = "localhost",
-        .port = 8080
-    });
+    client->open("wss://localhost:8080").unwrap();
     client->onMessage([](std::string message) {
         std::cout << "[Server] " + message << std::endl;
     });

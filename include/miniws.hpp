@@ -5,6 +5,8 @@
 #include <string>
 #include <vector>
 #include <thread>
+#include <optional>
+#include "BaseTransport.hpp"
 
 // #include <qsox/TcpStream.hpp>
 
@@ -14,12 +16,11 @@ namespace qsox {
     class TcpStream;
 }
 
-struct WOLFSSL;
-
 namespace ws {
     struct ServerAddress {
-        std::string url;
+        std::string host;
         int port;
+        bool secure;
         std::string path = "/";
     };
 
@@ -31,8 +32,7 @@ namespace ws {
 
     class Client {
     private:
-        std::shared_ptr<qsox::TcpStream> stream;
-        WOLFSSL* ssl;
+        std::shared_ptr<BaseTransport> stream;
         bool connected = false;
         std::thread watchThread;
         ServerAddress address;
@@ -69,7 +69,8 @@ namespace ws {
             return connected;
         }
 
-        void open(ServerAddress address);
+        geode::Result<> open(ServerAddress address);
+        geode::Result<> open(std::string_view url);
         void close();
 
         void send(std::string data);

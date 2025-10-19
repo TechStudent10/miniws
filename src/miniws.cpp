@@ -2,18 +2,18 @@
 
 #include <map>
 #include <random>
+#include <charconv>
 
 #include <qsox/TcpStream.hpp>
 #include <qsox/Resolver.hpp>
 #include <miniws.hpp>
+#include "TlsTransport.hpp"
+#include "TcpTransport.hpp"
 
 // #include <cpr/cpr.h>
 #include <base64.hpp>
 #include <fmt/base.h>
 #include <fmt/format.h>
-
-#include <wolfssl/options.h>
-#include <wolfssl/ssl.h>
 
 using namespace qsox;
 
@@ -47,7 +47,7 @@ namespace ws {
     }
 
     std::string Client::createHandshakeRequest(ServerAddress address) {
-        std::string url = address.url;
+        std::string url = address.host;
         int port = address.port;
         std::string path = address.path;
 
@@ -91,45 +91,73 @@ namespace ws {
         return frame;
     }
 
-    void Client::open(ServerAddress address) {
-        if (isConnected()) {
-            error("already connected!");
-            return;
+    Result<> Client::open(std::string_view url) {
+        ServerAddress addr{};
+
+        if (url.starts_with("ws://")) {
+            addr.secure = false;
+            url.remove_prefix(5);
+        } else if (url.starts_with("wss://")) {
+            addr.secure = true;
+            url.remove_prefix(6);
+        } else {
+            return Err("invalid url scheme");
         }
 
-        wolfSSL_Init();
-        WOLFSSL_CTX* ctx = wolfSSL_CTX_new(wolfTLSv1_2_client_method());
-        wolfSSL_CTX_load_verify_locations(ctx, "ca-cert.pem", NULL);
+        size_t pathPos = url.find('/');
+        if (pathPos != std::string_view::npos) {
+            addr.path = std::string(url.substr(pathPos));
+            url = url.substr(0, pathPos);
+        }
 
-        ssl = wolfSSL_new(ctx);
+        size_t portPos = url.find(':');
+        if (portPos != std::string_view::npos) {
+            addr.host = std::string(url.substr(0, portPos));
+            auto [ptr, ec] = std::from_chars(url.data() + portPos + 1, url.data() + url.size(), addr.port);
+            if (ec != std::errc()) {
+                return Err("invalid port");
+            }
+        } else {
+            addr.host = std::string(url);
+            addr.port = addr.secure ? 443 : 80;
+        }
 
-        // creating the socket
+        return this->open(std::move(addr));
+    }
+
+    Result<> Client::open(ServerAddress address) {
+        if (this->isConnected()) {
+            return Err("already connected!");
+        }
+
+        // bool secure = address.url.starts_with("wss://");
+        bool secure = true;
+
         this->address = address;
 
-        std::string url = address.url;
+        std::string url = address.host;
         uint16_t port = address.port;
         std::string path = address.path;
 
         auto resolveRes = qsox::resolver::resolve(url);
         if (resolveRes.isErr()) {
-            error(fmt::format("error resolving address: {}", resolveRes.unwrapErr().message()));
-            return;
+            return Err(fmt::format("failed to resolve address: {}", resolveRes.unwrapErr().message()));
         }
 
         info(fmt::format("resolved address: {}", resolveRes.unwrap().toString()));
 
-        auto streamRes = TcpStream::connect({resolveRes.unwrap(), port});
-        if (streamRes.isErr()) {
-            error(fmt::format("error connecting to tcpstream: {}", streamRes.unwrapErr().message()));
-            return;
+        if (secure) {
+            GEODE_UNWRAP_INTO(stream, TlsTransport::connect({resolveRes.unwrap(), port}));
+        } else {
+            GEODE_UNWRAP_INTO(stream, TcpTransport::connect({resolveRes.unwrap(), port}));
         }
-
-        stream = std::make_shared<qsox::TcpStream>(std::move(streamRes).unwrap());
 
         watchThread = std::thread([this]() {
             this->watch();
         });
         watchThread.detach();
+
+        return Ok();
     }
 
     void Client::watch() {
@@ -137,13 +165,13 @@ namespace ws {
 
         CHECK_UNWRAP(
             stream->send(request.c_str(), request.size()),
-            "unable to send handshake request: {}", res.unwrapErr().message()
+            "unable to send handshake request: {}", res.unwrapErr()
         )
 
         char buffer[4096];
         CHECK_UNWRAP(
             stream->receive(buffer, sizeof(buffer) - 1),
-            "unable to receive handshake response: {}", res.unwrapErr().message()
+            "unable to receive handshake response: {}", res.unwrapErr()
         )
 
         if (std::string(buffer).find("HTTP/1.1 101") == std::string::npos) {
@@ -165,7 +193,7 @@ namespace ws {
             char ws_buffer[2];
             CHECK_UNWRAP(
                 stream->receiveExact(ws_buffer, 2),
-                "unable to receieve message: {}", res.unwrapErr().message()
+                "unable to receieve message: {}", res.unwrapErr()
             )
 
             bool fin = ws_buffer[0] & 0x80;
@@ -177,14 +205,14 @@ namespace ws {
                 uint8_t ext[2];
                 CHECK_UNWRAP(
                     stream->receiveExact(ext, 2),
-                    "unable to get length: {}", res.unwrapErr().message()
+                    "unable to get length: {}", res.unwrapErr()
                 )
                 len = (ext[0] << 8) | ext[1];
             } else if (len == 127) {
                 uint8_t ext[8];
                 CHECK_UNWRAP(
                     stream->receiveExact(ext, 8),
-                    "unable to get length: {}", res.unwrapErr().message()
+                    "unable to get length: {}", res.unwrapErr()
                 )
                 len = 0;
                 for (int i = 0; i < 8; ++i)
@@ -195,14 +223,14 @@ namespace ws {
             if (masked) {
                 CHECK_UNWRAP(
                     stream->receiveExact(recv_masking_key, 4),
-                    "unable to get masking key: {}", res.unwrapErr().message()
+                    "unable to get masking key: {}", res.unwrapErr()
                 )
             }
 
             std::vector<uint8_t> payload(len);
             CHECK_UNWRAP(
                 stream->receiveExact(payload.data(), len),
-                "unable to receieve payload: {}", res.unwrapErr().message()
+                "unable to receieve payload: {}", res.unwrapErr()
             )
 
             if (masked) {
@@ -227,15 +255,15 @@ namespace ws {
 
         CHECK_UNWRAP(
             stream->send(frame.data(), frame.size()),
-            "unable to send message frame: {}", res.unwrapErr().message()
+            "unable to send message frame: {}", res.unwrapErr()
         )
     }
 
     void Client::close() {
         if (stream) {
             CHECK_UNWRAP(
-                stream->shutdown(qsox::ShutdownMode::Both),
-                "unable to shutdown stream: {}", res.unwrapErr().message()
+                stream->shutdown(),
+                "unable to shutdown stream: {}", res.unwrapErr()
             )
         }
     }

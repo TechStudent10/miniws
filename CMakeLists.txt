@@ -17,13 +17,15 @@ CPMAddPackage(
     GIT_TAG "11.2.0"
     OPTIONS "BUILD_SHARED_LIBS OFF"
 )
-CPMAddPackage("gh:dankmeme01/qsox#9c81b6fa")
+CPMAddPackage("gh:dankmeme01/qsox#93da9bfc")
+CPMAddPackage("gh:geode-sdk/result#v1.3.4")
 CPMAddPackage(
     NAME wolfssl
     GIT_REPOSITORY "https://github.com/wolfSSL/wolfssl.git"
     GIT_TAG "v5.8.2-stable"
     OPTIONS "WOLFSSL_QUIC OFF"
             "WOLFSSL_HARDEN OFF"
+            "WOLFSSL_OPENSSLEXTRA ON"
             "WOLFSSL_TLSV12 ON"
             "WOLFSSL_INSTALL OFF"
             "WOLFSSL_CRYPT_TESTS OFF"
@@ -33,6 +35,7 @@ CPMAddPackage(
 # CPMAddPackage("gh:libcpr/cpr#e10e86f")
 
 target_link_libraries(${PROJECT_NAME} PRIVATE fmt qsox wolfssl)
+target_link_libraries(${PROJECT_NAME} PUBLIC GeodeResult)
 target_include_directories(${PROJECT_NAME} PRIVATE libs "${qsox_SOURCE_DIR}/include")
 
 # silence wolfssl warnings
