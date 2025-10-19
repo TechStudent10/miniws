@@ -59,7 +59,6 @@ namespace ws {
         void watch();
 
     public:
-        friend class TcpStream;
         Client();
         ~Client() noexcept {
             close();
@@ -74,7 +73,7 @@ namespace ws {
         void close();
 
         void send(std::string data);
-        
+
         void onMessage(std::function<void(std::string)> callback) {
             msgCallback = callback;
         }

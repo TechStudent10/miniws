@@ -8,7 +8,7 @@
 
 typedef unsigned char uchar;
 static const std::string b = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";//=
-static std::string base64_encode(const std::string &in) {
+static std::string base64_encode(std::string_view in) {
     std::string out;
 
     int val=0, valb=-6;
@@ -26,7 +26,7 @@ static std::string base64_encode(const std::string &in) {
 }
 
 
-static std::string base64_decode(const std::string &in) {
+static std::string base64_decode(std::string_view in) {
 
     std::string out;
 

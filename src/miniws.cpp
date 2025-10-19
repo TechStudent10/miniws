@@ -3,9 +3,8 @@
 #include <map>
 #include <random>
 
-#include <netinet/in.h>
-
 #include <qsox/TcpStream.hpp>
+#include <qsox/Resolver.hpp>
 #include <miniws.hpp>
 
 // #include <cpr/cpr.h>
@@ -18,8 +17,24 @@
 
 using namespace qsox;
 
-using random_bytes_engine = std::independent_bits_engine<
-    std::default_random_engine, CHAR_BIT, unsigned char>;
+static void fillRandom(uint8_t* dest, size_t len) {
+    static std::random_device rd;
+    static std::mt19937_64 generator(rd());
+
+    while (len > 8) {
+        uint64_t value = generator();
+        std::memcpy(dest, &value, sizeof(value));
+        dest += sizeof(value);
+        len -= sizeof(value);
+    }
+
+    // less than 8 bytes left
+    while (len > 0) {
+        uint8_t value = static_cast<uint8_t>(generator() % 256);
+        *dest++ = value;
+        --len;
+    }
+}
 
 #define CHECK_UNWRAP(statement, ...) if (auto res = statement; res.isErr()) { error(fmt::format(__VA_ARGS__)); return; }
 
@@ -36,11 +51,11 @@ namespace ws {
         int port = address.port;
         std::string path = address.path;
 
-        random_bytes_engine rd;
-        std::vector<unsigned char> random_bytes(16);
-        std::generate(std::begin(random_bytes), std::end(random_bytes), std::ref(rd));
 
-        std::string bytes(reinterpret_cast<char*>(random_bytes.data()), random_bytes.size());
+        std::array<uint8_t, 16> random_bytes;
+        fillRandom(random_bytes.data(), random_bytes.size());
+
+        std::string_view bytes(reinterpret_cast<char*>(random_bytes.data()), random_bytes.size());
 
         std::string request =
             "GET " + path + " HTTP/1.1\r\n"
@@ -81,7 +96,7 @@ namespace ws {
             error("already connected!");
             return;
         }
-        
+
         wolfSSL_Init();
         WOLFSSL_CTX* ctx = wolfSSL_CTX_new(wolfTLSv1_2_client_method());
         wolfSSL_CTX_load_verify_locations(ctx, "ca-cert.pem", NULL);
@@ -92,22 +107,25 @@ namespace ws {
         this->address = address;
 
         std::string url = address.url;
-        int port = address.port;
+        uint16_t port = address.port;
         std::string path = address.path;
 
-        sockaddr_in serverAddress;
-        serverAddress.sin_family = AF_INET;
-        serverAddress.sin_port = htons(port);
-        serverAddress.sin_addr.s_addr = INADDR_ANY;
+        auto resolveRes = qsox::resolver::resolve(url);
+        if (resolveRes.isErr()) {
+            error(fmt::format("error resolving address: {}", resolveRes.unwrapErr().message()));
+            return;
+        }
 
-        auto streamRes = TcpStream::connect(SocketAddressV4::fromSockAddr(serverAddress));
+        info(fmt::format("resolved address: {}", resolveRes.unwrap().toString()));
+
+        auto streamRes = TcpStream::connect({resolveRes.unwrap(), port});
         if (streamRes.isErr()) {
             error(fmt::format("error connecting to tcpstream: {}", streamRes.unwrapErr().message()));
             return;
         }
 
         stream = std::make_shared<qsox::TcpStream>(std::move(streamRes).unwrap());
-        
+
         watchThread = std::thread([this]() {
             this->watch();
         });
@@ -132,7 +150,7 @@ namespace ws {
             error("handshake did NOT succeed...");
             return;
         }
-        
+
         info("handshake complete; watching for messages...");
         connected = true;
 
@@ -154,7 +172,7 @@ namespace ws {
             uint8_t opcode = ws_buffer[0] & 0x0F;
             bool masked = ws_buffer[1] & 0x80;
             uint64_t len = ws_buffer[1] & 0x7F;
-            
+
             if (len == 126) {
                 uint8_t ext[2];
                 CHECK_UNWRAP(
@@ -221,7 +239,7 @@ namespace ws {
             )
         }
     }
-    
+
     std::string Client::severityToString(LogSeverity severity) {
         std::map<LogSeverity, std::string> severityMap = {
             { LogSeverity::Debug, "Debug" },
