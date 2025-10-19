@@ -1,6 +1,14 @@
 import { WebSocketServer } from 'ws'
+import https from 'https';
+import fs from 'fs';
 
-const ws = new WebSocketServer({ port: 8080 });
+const options = {
+    key: fs.readFileSync('key.pem'),
+    cert: fs.readFileSync('cert.pem')
+};
+
+const httpsServer = https.createServer(options);
+const ws = new WebSocketServer({ server: httpsServer });
 
 ws.on('connection', (socket) => {
     console.log('Client connected');
@@ -16,4 +24,6 @@ ws.on('connection', (socket) => {
     });
 });
 
-console.log('WebSocket server is running on ws://localhost:8080')
+httpsServer.listen(8080, () => {
+    console.log('WebSocket server is running on wss://localhost:8080');
+});
